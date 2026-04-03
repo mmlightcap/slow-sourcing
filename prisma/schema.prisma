@@ -27,6 +27,7 @@ model User {
   monitoredQueries MonitoredQuery[]
   articleLeads     ArticleLead[]
   bigRuns          BigRun[]
+  articlesRead     ArticleRead[]
 
   @@map("users")
 }
@@ -152,13 +153,32 @@ model BigRun {
   id            String    @id @default(cuid())
   findallId     String    // the Parallel.ai findall_id
   status        String    @default("running") // running, completed, failed
-  matchedCount  Int       @default(0)
-  importedCount Int       @default(0)
+  logic         String?   // description of what this run was searching for
+  readCount     Int       @default(0)  // total articles considered
+  matchedCount  Int       @default(0)  // articles that matched criteria
+  importedCount Int       @default(0)  // articles imported as leads
   createdAt     DateTime  @default(now())
   completedAt   DateTime?
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articlesRead ArticleRead[]
 
   @@map("big_runs")
+}
+
+model ArticleRead {
+  id          String   @id @default(cuid())
+  bigRunId    String
+  url         String
+  title       String?
+  description String?
+  matchStatus String   // "matched" or "unmatched"
+  addedAt     DateTime @default(now())
+
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bigRun  BigRun @relation(fields: [bigRunId], references: [id], onDelete: Cascade)
+
+  @@map("articles_read")
 }

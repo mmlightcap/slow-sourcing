@@ -395,11 +395,20 @@ export async function startBigRun(matchLimit: number = 75) {
     match_limit: matchLimit,
   })
 
+  // Build a human-readable summary of the logic used
+  const logicSummary = [
+    `Objective: ${FINDALL_OBJECTIVE.trim()}`,
+    "",
+    "Match conditions:",
+    ...FINDALL_MATCH_CONDITIONS.map((c) => `• ${c.name}: ${c.description}`),
+  ].join("\n")
+
   // Save to DB so we can poll it
   const bigRun = await prisma.bigRun.create({
     data: {
       findallId: findallRun.findall_id,
       status: "running",
+      logic: logicSummary,
       userId: session.user.id,
     },
   })
@@ -420,6 +429,7 @@ export async function checkBigRun(bigRunId: string) {
   const findallRun = await parallel.beta.findall.retrieve(bigRun.findallId)
   const status = findallRun.status.status
   const matchedCount = findallRun.status.metrics.matched_candidates_count ?? 0
+  const readCount = findallRun.status.metrics.total_candidates_count ?? 0
 
   // Update our DB record
   const updated = await prisma.bigRun.update({
@@ -427,6 +437,7 @@ export async function checkBigRun(bigRunId: string) {
     data: {
       status: status === "completed" ? "completed" : status === "failed" ? "failed" : "running",
       matchedCount,
+      readCount,
       completedAt: ["completed", "failed"].includes(status) ? new Date() : undefined,
     },
   })
@@ -445,7 +456,31 @@ export async function importBigRunResults(bigRunId: string) {
 
   // Fetch all results from Parallel.ai
   const result = await parallel.beta.findall.result(bigRun.findallId)
-  const matched = result.candidates.filter((c) => c.match_status === "matched")
+  const allCandidates = result.candidates
+  const matched = allCandidates.filter((c) => c.match_status === "matched")
+
+  // Save all articles read (matched + unmatched) to articles_read table
+  for (const candidate of allCandidates) {
+    await prisma.articleRead.upsert({
+      where: { id: `${bigRunId}-${Buffer.from(candidate.url).toString("base64").slice(0, 20)}` },
+      update: {},
+      create: {
+        id: `${bigRunId}-${Buffer.from(candidate.url).toString("base64").slice(0, 20)}`,
+        bigRunId,
+        url: candidate.url,
+        title: candidate.name || null,
+        description: candidate.description || null,
+        matchStatus: candidate.match_status ?? "unknown",
+        userId: session.user.id,
+      },
+    })
+  }
+
+  // Update readCount on the big run
+  await prisma.bigRun.update({
+    where: { id: bigRunId },
+    data: { readCount: allCandidates.length },
+  })
 
   // Filter out already-imported URLs first
   const newCandidates = []
